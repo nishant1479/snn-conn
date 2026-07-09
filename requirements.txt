@@ -1,0 +1,8 @@
+torch>=2.2
+torchvision>=0.17
+snntorch>=0.8
+tonic>=1.5
+optuna>=3.6
+PyYAML>=6.0
+pandas>=2.0
+tqdm>=4.66

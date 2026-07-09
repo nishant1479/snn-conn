@@ -1,0 +1,57 @@
+seed: 7
+device: cpu
+output_dir: runs/snn_ablation
+
+dataset:
+  name: dvs128_gesture        # dvs128_gesture or cifar10_dvs
+  data_dir: data
+  cache_dir: data/cache
+  num_workers: 2
+  batch_size: 8
+  val_fraction: 0.15
+  time_bins: 16
+  image_size: 64
+
+model:
+  architecture: resnet18_snn
+  base_channels: 32
+  num_classes: 11             # DVS128 Gesture = 11, CIFAR10-DVS = 10
+  lif:
+    beta: 0.9
+    threshold: 1.0
+    surrogate: atan           # atan or fast_sigmoid
+    detach_reset: true
+  multi_threshold:
+    enabled: false
+    thresholds: [0.5, 1.0, 1.5]
+    mode: parallel            # parallel or cascade
+  skip:
+    enabled: false
+    type: add                 # add or concat
+    count: 1                  # 0, 1, or 2 extra intra-block skips
+    position: block_output    # conv1, block_output, or both
+
+train:
+  epochs: 20
+  lr: 0.001
+  weight_decay: 0.0001
+  amp: false
+  grad_clip_norm: 1.0
+  checkpoint_every: 1
+
+teacher:
+  enabled: false
+  checkpoint: null
+  epochs: 20
+  lr: 0.001
+  temperature: 4.0
+  alpha_kl: 0.5
+  alpha_feature: 0.05
+
+optuna:
+  trials: 25
+  finetune_epochs: 3
+  storage: null
+  study_name: skip_search
+  direction: maximize
+  pretrained_checkpoint: null
