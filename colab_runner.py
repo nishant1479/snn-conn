@@ -30,6 +30,20 @@ def mount_drive(mount_point: str = "/content/drive") -> None:
     if not in_colab():
         print("Google Drive mounting is only available inside Google Colab.")
         return
+    try:
+        from IPython import get_ipython
+
+        ipython = get_ipython()
+        if ipython is None or not hasattr(ipython, "kernel"):
+            print("Drive mounting must run in a Colab notebook cell, not via !python.")
+            print("Run this cell first:")
+            print("from google.colab import drive")
+            print(f"drive.mount('{mount_point}')")
+            return
+    except ImportError:
+        print("IPython is not available, so Drive cannot be mounted from this process.")
+        return
+
     from google.colab import drive  # type: ignore
 
     drive.mount(mount_point)

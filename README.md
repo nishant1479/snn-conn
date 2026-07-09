@@ -13,6 +13,22 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+Colab with DVS128 Gesture stored in Google Drive:
+
+```python
+from google.colab import drive
+drive.mount("/content/drive")
+```
+
+```bash
+!git clone https://github.com/nishant1479/snn-conn.git
+%cd snn-conn
+!python colab_runner.py install
+!python colab_runner.py prepare-dvsgesture --drive-dataset-dir /content/drive/MyDrive/datasets/DVSGesture
+```
+
+The Drive folder should contain `ibmGestureTrain.tar.gz` and `ibmGestureTest.tar.gz`.
+
 Example commands, when you are ready to train:
 
 ```bash
