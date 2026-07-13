@@ -41,7 +41,8 @@ class GradNormTemporalLoss(nn.Module):
             self.initialized = True
 
         weighted_losses = self.loss_weights * losses
-        model_loss = torch.sum(self.loss_weights.detach() * losses)
+        model_weights = self.loss_weights.detach().clone()
+        model_loss = torch.sum(model_weights * losses)
         gradnorm_loss = self._gradnorm_loss(weighted_losses, losses, tuple(shared_parameters))
         metrics = {
             "temporal_ce": float(losses.detach().mean().cpu()),
