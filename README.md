@@ -41,6 +41,12 @@ python train.py --config configs/default.yaml --stage full --init-checkpoint run
 
 Results are appended to `runs/snn_ablation/ablation_results.csv`.
 
+Temporal loss modes are controlled by `train.loss.method`:
+
+- `mean_logits`: legacy behavior in this scaffold, averaging logits over time before cross entropy.
+- `tet` or `original_tet`: uniform temporal loss, `(1/T) * sum_t CE(O_t, y)`.
+- `gradnorm`: GradNorm-style adaptive temporal balancing, `sum_t w_t CE(O_t, y)`, using `train.loss.gradnorm.shared_parameters` to choose the shared layer for gradient norms.
+
 Notes:
 
 - `DVSGesture` is the default because Tonic provides an official train/test split. `CIFAR10-DVS` is also supported, but this scaffold creates a local random split because the dataset is commonly distributed without a canonical train/test split.

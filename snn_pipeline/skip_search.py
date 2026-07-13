@@ -10,6 +10,7 @@ from torch import nn
 
 from .data import build_dataloaders
 from .models import build_model
+from .temporal_loss import GradNormTemporalLoss, get_named_parameters
 from .training import evaluate, load_weights, train_one_epoch
 
 
@@ -48,8 +49,37 @@ def run_skip_search(cfg: dict[str, Any]) -> optuna.Study:
             lr=trial_cfg["train"]["lr"],
             weight_decay=trial_cfg["train"]["weight_decay"],
         )
+        temporal_loss = None
+        temporal_optimizer = None
+        temporal_shared_parameters = ()
+        loss_cfg = trial_cfg["train"].get("loss", {})
+        if loss_cfg.get("method") == "gradnorm":
+            gradnorm_cfg = loss_cfg.get("gradnorm", {})
+            temporal_loss = GradNormTemporalLoss(
+                time_steps=trial_cfg["dataset"]["time_bins"],
+                alpha=gradnorm_cfg.get("alpha", 1.5),
+                eps=gradnorm_cfg.get("eps", 1e-8),
+            ).to(device)
+            temporal_optimizer = torch.optim.Adam(
+                temporal_loss.parameters(),
+                lr=gradnorm_cfg.get("lr", trial_cfg["train"]["lr"]),
+            )
+            temporal_shared_parameters = get_named_parameters(
+                model,
+                gradnorm_cfg.get("shared_parameters", ["fc.weight"]),
+            )
         for _ in range(search_cfg["finetune_epochs"]):
-            train_one_epoch(model, train_loader, optimizer, device, criterion, trial_cfg)
+            train_one_epoch(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                criterion,
+                trial_cfg,
+                temporal_loss=temporal_loss,
+                temporal_optimizer=temporal_optimizer,
+                temporal_shared_parameters=temporal_shared_parameters,
+            )
         val = evaluate(model, val_loader, device)
         trial.set_user_attr("skip", trial_cfg["model"]["skip"])
         return val["acc"]

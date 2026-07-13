@@ -104,7 +104,7 @@ class SpikingResNet18(nn.Module):
             layers[f"{name}_{idx}"] = SpikingBasicBlock(self.in_channels, out_channels, 1, model_cfg)
         return nn.ModuleDict(layers)
 
-    def forward(self, frames: torch.Tensor, return_features: bool = False):
+    def forward(self, frames: torch.Tensor, return_features: bool = False, return_temporal: bool = False):
         if frames.ndim != 5:
             raise ValueError("Expected frames with shape [batch, time, channels, height, width].")
         state: dict[str, torch.Tensor | None] = {}
@@ -119,10 +119,15 @@ class SpikingResNet18(nn.Module):
             feat = self.pool(x).flatten(1)
             features.append(feat)
             logits_per_t.append(self.fc(feat))
-        logits = torch.stack(logits_per_t, dim=1).mean(dim=1)
+        temporal_logits = torch.stack(logits_per_t, dim=1)
+        logits = temporal_logits.mean(dim=1)
         feature = torch.stack(features, dim=1).mean(dim=1)
+        if return_features and return_temporal:
+            return logits, feature, temporal_logits
         if return_features:
             return logits, feature
+        if return_temporal:
+            return temporal_logits
         return logits
 
 
@@ -150,14 +155,18 @@ class ANNResNet18(nn.Module):
             layers.append(ANNBasicBlock(self.in_channels, out_channels, 1))
         return nn.Sequential(*layers)
 
-    def forward(self, frames: torch.Tensor, return_features: bool = False):
+    def forward(self, frames: torch.Tensor, return_features: bool = False, return_temporal: bool = False):
         x = frames.mean(dim=1) if frames.ndim == 5 else frames
         x = self.stem(x)
         x = self.layers(x)
         feature = self.pool(x).flatten(1)
         logits = self.fc(feature)
+        if return_features and return_temporal:
+            return logits, feature, logits.unsqueeze(1)
         if return_features:
             return logits, feature
+        if return_temporal:
+            return logits.unsqueeze(1)
         return logits
 
 

@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from .distillation import DistillationLoss
 from .metrics import accuracy
+from .temporal_loss import GradNormTemporalLoss, temporal_cross_entropy
 
 
 def save_checkpoint(path: str | Path, model: nn.Module, cfg: dict[str, Any], metrics: dict[str, Any]) -> None:
@@ -33,6 +34,9 @@ def train_one_epoch(
     criterion: nn.Module,
     cfg: dict[str, Any],
     teacher: nn.Module | None = None,
+    temporal_loss: GradNormTemporalLoss | None = None,
+    temporal_optimizer: torch.optim.Optimizer | None = None,
+    temporal_shared_parameters: tuple[torch.nn.Parameter, ...] = (),
 ) -> dict[str, float]:
     model.train()
     if teacher is not None:
@@ -41,22 +45,47 @@ def train_one_epoch(
     total_acc = 0.0
     total_seen = 0
     grad_clip = cfg["train"].get("grad_clip_norm")
+    loss_method = cfg["train"].get("loss", {}).get("method", "mean_logits")
+    if loss_method == "original_tet":
+        loss_method = "tet"
+    if loss_method not in {"mean_logits", "tet", "gradnorm"}:
+        raise ValueError("train.loss.method must be mean_logits, tet/original_tet, or gradnorm.")
 
     for frames, targets in tqdm(loader, desc="train", leave=False):
         frames = frames.to(device)
         targets = targets.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        if teacher is not None:
+        if loss_method == "gradnorm":
+            if teacher is not None:
+                raise ValueError("GradNorm temporal loss is not combined with teacher distillation in this pipeline.")
+            if temporal_loss is None or temporal_optimizer is None:
+                raise ValueError("GradNorm temporal loss requires temporal_loss and temporal_optimizer.")
+            logits_per_t = model(frames, return_temporal=True)
+            logits = logits_per_t.mean(dim=1)
+            loss, gradnorm_loss, _, _ = temporal_loss(logits_per_t, targets, temporal_shared_parameters)
+            temporal_optimizer.zero_grad(set_to_none=True)
+            weight_grads = torch.autograd.grad(gradnorm_loss, temporal_loss.loss_weights, retain_graph=True)
+            temporal_loss.loss_weights.grad = weight_grads[0]
+            temporal_optimizer.step()
+            temporal_loss.renormalize_()
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+        elif loss_method == "tet" and teacher is None:
+            logits_per_t = model(frames, return_temporal=True)
+            logits = logits_per_t.mean(dim=1)
+            loss = temporal_cross_entropy(logits_per_t, targets).mean()
+            loss.backward()
+        elif teacher is not None:
             logits, features = model(frames, return_features=True)
             with torch.no_grad():
                 t_logits, t_features = teacher(frames, return_features=True)
             loss, _ = criterion(logits, targets, t_logits, features, t_features)
+            loss.backward()
         else:
             logits = model(frames)
             loss = criterion(logits, targets)
-
-        loss.backward()
+            loss.backward()
         if grad_clip:
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()

@@ -38,6 +38,13 @@ train:
   amp: false
   grad_clip_norm: 1.0
   checkpoint_every: 1
+  loss:
+    method: mean_logits          # mean_logits, tet/original_tet, or gradnorm
+    gradnorm:
+      alpha: 1.5
+      lr: 0.001
+      eps: 0.00000001
+      shared_parameters: [fc.weight]
 
 teacher:
   enabled: false

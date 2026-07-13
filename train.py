@@ -14,6 +14,7 @@ from snn_pipeline.data import build_dataloaders
 from snn_pipeline.metrics import Timer, append_result, count_parameters
 from snn_pipeline.models import build_model
 from snn_pipeline.skip_search import run_skip_search
+from snn_pipeline.temporal_loss import GradNormTemporalLoss, get_named_parameters
 from snn_pipeline.training import evaluate, load_weights, save_checkpoint, train_one_epoch
 from snn_pipeline.distillation import DistillationLoss
 
@@ -52,13 +53,45 @@ def train_teacher(cfg: dict, train_loader, val_loader, device: torch.device, out
     criterion = nn.CrossEntropyLoss()
     best_acc = -1.0
     best_path = out_dir / "teacher_best.pt"
+    teacher_cfg = deepcopy(cfg)
+    teacher_cfg["train"].setdefault("loss", {})["method"] = "mean_logits"
     for epoch in range(cfg["teacher"]["epochs"]):
-        train_one_epoch(teacher, train_loader, optimizer, device, criterion, cfg)
+        train_one_epoch(teacher, train_loader, optimizer, device, criterion, teacher_cfg)
         val = evaluate(teacher, val_loader, device)
         if val["acc"] > best_acc:
             best_acc = val["acc"]
             save_checkpoint(best_path, teacher, cfg, {"epoch": epoch, "val_acc": best_acc})
     return best_path
+
+
+def build_temporal_training(
+    cfg: dict,
+    model: nn.Module,
+    device: torch.device,
+) -> tuple[GradNormTemporalLoss | None, torch.optim.Optimizer | None, tuple[torch.nn.Parameter, ...]]:
+    loss_cfg = cfg["train"].get("loss", {})
+    method = loss_cfg.get("method", "mean_logits")
+    if method == "original_tet":
+        method = "tet"
+    if method not in {"mean_logits", "tet", "gradnorm"}:
+        raise ValueError("train.loss.method must be mean_logits, tet/original_tet, or gradnorm.")
+    if method != "gradnorm":
+        return None, None, ()
+
+    gradnorm_cfg = loss_cfg.get("gradnorm", {})
+    time_steps = cfg["dataset"]["time_bins"]
+    temporal_loss = GradNormTemporalLoss(
+        time_steps=time_steps,
+        alpha=gradnorm_cfg.get("alpha", 1.5),
+        eps=gradnorm_cfg.get("eps", 1e-8),
+    ).to(device)
+    temporal_optimizer = torch.optim.Adam(
+        temporal_loss.parameters(),
+        lr=gradnorm_cfg.get("lr", cfg["train"]["lr"]),
+    )
+    shared_names = gradnorm_cfg.get("shared_parameters", ["fc.weight"])
+    shared_parameters = get_named_parameters(model, shared_names)
+    return temporal_loss, temporal_optimizer, shared_parameters
 
 
 def run_train(cfg: dict, stage: str, init_checkpoint: str | None = None) -> None:
@@ -100,12 +133,24 @@ def run_train(cfg: dict, stage: str, init_checkpoint: str | None = None) -> None
         lr=cfg["train"]["lr"],
         weight_decay=cfg["train"]["weight_decay"],
     )
+    temporal_loss, temporal_optimizer, temporal_shared_parameters = build_temporal_training(cfg, model, device)
 
     best_acc = -1.0
     best_path = out_dir / "best.pt"
     with Timer() as timer:
         for epoch in range(cfg["train"]["epochs"]):
-            train_metrics = train_one_epoch(model, train_loader, optimizer, device, criterion, cfg, teacher)
+            train_metrics = train_one_epoch(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                criterion,
+                cfg,
+                teacher,
+                temporal_loss,
+                temporal_optimizer,
+                temporal_shared_parameters,
+            )
             val_metrics = evaluate(model, val_loader, device)
             if val_metrics["acc"] > best_acc:
                 best_acc = val_metrics["acc"]
